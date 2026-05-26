@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "pr-test-agent"
+version = "0.1.0"
+description = "PR-triggered Python test generator with LLM auto-repair."
+requires-python = ">=3.9"
+dependencies = []                     # stdlib only for the core agent
+
+[project.optional-dependencies]
+llm = ["openai>=1.0"]
+dev = ["pytest"]
+
+[project.scripts]
+pr-test-agent = "pr_test_agent.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["pr_test_agent*"]

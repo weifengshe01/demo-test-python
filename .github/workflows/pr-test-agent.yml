@@ -1,0 +1,79 @@
+name: PR Test Agent
+
+on:
+  pull_request:
+    branches:
+      - main                          # only triggers when targeting main
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write                # to post a comment with the report
+
+jobs:
+  generate-and-test:
+    name: Generate → Run → Auto-repair
+    runs-on: ubuntu-latest
+
+    steps:
+      # ── 1. Checkout with full history so git diff works ──────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # ── 2. Python environment ─────────────────────────────────────────────
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -e ".[llm]"     # installs pr_test_agent + openai optional dep
+          pip install pytest
+
+      # ── 3. Run the agent ──────────────────────────────────────────────────
+      - name: Run PR Test Agent
+        env:
+          OPENAI_BASE_URL: ${{ secrets.OPENAI_BASE_URL }}
+          OPENAI_API_KEY:  ${{ secrets.OPENAI_API_KEY }}
+          LLM_MODEL:       ${{ secrets.LLM_MODEL }}        # e.g. gpt-4o or bedrock/...
+        run: |
+          python -m pr_test_agent \
+            --base origin/main \
+            --head ${{ github.event.pull_request.head.sha }} \
+            --repo-root . \
+            --output generated_tests \
+            --test-dir tests \
+            --max-tests 10 \
+            --repair-attempts 3 \
+            --timeout 120
+        # Exit code 1 → tests still failing → step fails → merge is blocked
+
+      # ── 4. Upload report + generated tests as artifact ───────────────────
+      - name: Upload report
+        if: always()                  # upload even when tests fail
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-test-agent-report
+          path: |
+            generated_tests/
+            tests/test_*.py
+
+      # ── 5. Post report as PR comment ──────────────────────────────────────
+      - name: Comment report on PR
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const report = fs.existsSync('generated_tests/PR_TEST_AGENT_REPORT.md')
+              ? fs.readFileSync('generated_tests/PR_TEST_AGENT_REPORT.md', 'utf8')
+              : '_Report not generated._';
+            github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              body: report,
+            });
